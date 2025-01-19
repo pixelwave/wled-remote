@@ -1,4 +1,4 @@
-# wled-remote
+# WLED Remote
 WLED Remote Controller (Lilygo T4 S3)
 
 My goal was to create a small, portable, touchscreen-based remote to send commands to my WLED controller.
