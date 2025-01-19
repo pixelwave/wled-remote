@@ -1,0 +1,993 @@
+# Lilygo T4 S3 Sandbox
+
+# Subsitutions
+substitutions:
+  comment: "Lilygo T4-S3 Sandbox using LVGL"
+  device_name: lilygo-t4-s3
+  friendly_name: Lilygo T4-S3
+  # SETTINGS
+  display_timeout_s: '60'
+  ip_wled_controller: http://192.xxx.xxx.xxx/
+  #backlight_pin: GPIO4 # LCD
+
+  # Global Variable Definitions
+globals:
+# Relay
+- id: gv_relay1
+  type: bool
+  restore_value: no
+  initial_value: "false"
+- id: gv_relay2
+  type: bool
+  restore_value: no
+  initial_value: "false"
+- id: gv_relay3
+  type: bool
+  restore_value: no
+  initial_value: "false"
+- id: gv_relay4
+  type: bool
+  restore_value: no
+  initial_value: "false"
+# Brightness
+- id: gv_brightness
+  type: int
+  restore_value: no
+  initial_value: '0'
+# LED Strip Color
+- id: gv_rgb_color
+  type: lv_color_t
+  restore_value: no
+# Active FX
+- id: gv_fx
+  type: int
+  restore_value: no
+  initial_value: '0'
+# FX Speed
+- id: gv_sfx
+  type: int
+  restore_value: no
+  initial_value: '5'
+# FX Array
+- id: gv_fx_array
+  type: std::vector<std::string>
+  restore_value: no
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  comment: ${comment}
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"
+    board_build.esp-idf.memory_type: qio_opi
+    board_build.flash_mode: dio
+    board_upload.maximum_ram_size: 524288
+  # on_boot:
+  #   # show boot logo / animation
+  #   # - delay: 5s
+  #   # - lvgl.widget.hide: p_boot
+  #   # - lvgl.widget.show: p_main
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: ESP32S3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    # Required to achieve sufficient PSRAM bandwidth
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_NONE: y
+      COMPILER_OPTIMIZATION_SIZE: y
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y
+      CONFIG_ESP32S3_DATA_CACHE_64KB: y
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: y
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+      CONFIG_ESPTOOLPY_FLASHSIZE_16MB: y # fix warning about 2mb found
+
+external_components:
+- source: github://pr#8005
+  components: [ lvgl ]
+
+# Send http Requests
+http_request:
+
+# Enable logging
+logger:
+  level: DEBUG
+  #baud_rate: 0
+  baud_rate: 115200
+  tx_buffer_size: 8192 # Increase buffer size to capture more log data
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "xxx"
+
+ota:
+- platform: esphome
+  password: "xxx"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Lilygo-T4-S3 Fallback Hotspot"
+    password: "xxx"
+  # Update GUI after WIFI connection established
+  on_connect:
+  # run init
+  - script.execute: script_initialization
+  # hide "Connecting ..."  screen
+  - lvgl.widget.hide: boot_screen
+
+# Lilygo T4 S3 Configuration
+spi:
+  id: quad_spi
+  type: quad
+  clk_pin: 15
+  data_pins: [ 14, 10, 16, 12 ]
+
+i2c:
+  sda: 6
+  scl: 7
+
+touchscreen:
+- platform: cst226
+  id: my_touchscreen
+  interrupt_pin: 8
+  reset_pin: 17
+  # Resume from IDLE Mode
+  on_release:
+  - if:
+      condition: lvgl.is_paused
+      then:
+      - logger.log: "LVGL resuming"
+      - lvgl.resume:
+      - lvgl.widget.redraw: # --- Use different actions based on display type --- #
+      - lvgl.widget.hide: p_amoled_off # AMOLED
+      #- light.turn_on: display_backlight # LCD
+      # --- Use different actions based on display type --- #
+
+display:
+- platform: qspi_dbi
+  model: RM690B0
+  data_rate: 80MHz
+  spi_mode: mode0
+  dimensions:
+    width: 450
+    height: 600
+    offset_width: 16
+  color_order: rgb
+  invert_colors: false
+  brightness: 255
+  cs_pin: 11
+  reset_pin: 13
+  enable_pin: 9
+  update_interval: never
+  auto_clear_enabled: false
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# FONT Configuration
+font:
+# family (Required, string): The name of the Google Font family.
+# italic (Optional, boolean): Whether the font should be italic.
+# weight (Optional, enum): The weight of the font. Can be either the text name or the integer value:
+# use [bpp: 4] for better aliasing
+# thin: 100
+# extra-light: 200
+# light: 300
+# regular: 400 (default)
+# medium: 500
+# semi-bold: 600
+# bold: 700
+# extra-bold: 800
+# black: 900
+# - file: "gfonts://Roboto"
+#   id: font_normal
+#   size: 30
+#   glyphs: "!\"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/\\[]|&@#'"
+#   bpp: 4
+- file: "gfonts://Roboto@700"
+  id: font_value_small
+  size: 35
+  glyphs: "!\"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/\\[]|&@#'"
+  bpp: 4
+- file: "gfonts://Roboto@700"
+  id: font_value_big
+  size: 50
+  glyphs: "!\"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/\\[]|&@#'"
+  bpp: 4
+
+script:
+# Update WLED Controller States to Global Variables
+- id: script_initialization
+  then:
+  - http_request.get:
+      url: ${ip_wled_controller}json/state
+      capture_response: true
+      on_response:
+        then:
+        - lambda: |-
+            json::parse_json(body, [](JsonObject root) -> bool {
+                if (root["bri"]) {
+
+                  // Relay States
+                  id(gv_relay1) = root["MultiRelay"]["relays"][0]["state"];
+                  id(gv_relay2) = root["MultiRelay"]["relays"][1]["state"];
+                  id(gv_relay3) = root["MultiRelay"]["relays"][2]["state"];
+                  id(gv_relay4) = root["MultiRelay"]["relays"][3]["state"];
+
+                  // Brightness
+                  id(gv_brightness) = root["bri"];
+
+                  // Color (RGB)
+                  int red = root["seg"][0]["col"][0][0]; // Red
+                  int green = root["seg"][0]["col"][0][1]; // Green
+                  int blue = root["seg"][0]["col"][0][2]; // Blue
+                  id(gv_rgb_color) = lv_color_make(red, green, blue);
+
+                  // Effect Index
+                  id(gv_fx) = root["seg"][0]["fx"];
+
+                  // Effect Speed
+                  id(gv_sfx) = root["seg"][0]["sx"];
+                  id(gv_sfx) = 1 + (id(gv_sfx) * (10 - 1)) / 255;
+
+                  // Return value
+                  return true;
+                } else {
+                  ESP_LOGD("custom","JSON state return error");
+                  return false;
+                }
+            });
+
+  # Parse Effects into global array
+  - script.execute: script_fx_parse
+
+  # UPDATE GUI ==========
+
+  # PAGE -> RELAY
+  - lvgl.widget.update:
+      id: btn_high_beam
+      state:
+        checked: !lambda return id(gv_relay1);
+  - lvgl.widget.update:
+      id: btn_low_beam
+      state:
+        checked: !lambda return id(gv_relay2);
+  - lvgl.widget.update:
+      id: btn_led_strip
+      state:
+        checked: !lambda return id(gv_relay3);
+
+  # PAGE -> COLOR/BRIGHTNESS
+  - lvgl.label.update:
+      id: lbl_brightness
+      text: !lambda |-
+        // scale slider value to 0-100 as an integer
+        int scaled_value = (id(gv_brightness) - 1) * 100 / 254;
+        return str_sprintf("%d%%", scaled_value);
+  - lvgl.slider.update:
+      id: slider_brightness
+      value: !lambda return id(gv_brightness);
+  - lvgl.slider.update:
+      id: slider_color
+      knob:
+        bg_color: !lambda return id(gv_rgb_color);
+  - lvgl.obj.update:
+      id: color_field
+      bg_color: !lambda return id(gv_rgb_color);
+
+  # PAGE -> EFFECTS
+  - lvgl.label.update:
+      id: lbl_fx
+      text: !lambda |-
+        int index = id(gv_fx);
+        return id(gv_fx_array).at(index).c_str();
+  - lvgl.label.update:
+      id: lbl_sfx
+      text: !lambda return std::to_string(id(gv_sfx));
+
+# Parse Effect into internal Array
+- id: script_fx_parse
+  then:
+  - http_request.get:
+      url: ${ip_wled_controller}json/eff
+      capture_response: true
+      max_response_buffer_size: 8192
+      on_response:
+        then:
+        - lambda: |-
+            // Clear the array
+            id(gv_fx_array).clear();
+            // Parse JSON response and extract the first effect
+            DynamicJsonDocument doc(8192);  // Ensure the size is large enough for the response
+            DeserializationError error = deserializeJson(doc, body);
+            if (error) {
+              ESP_LOGE("custom", "Failed to parse JSON: %s", error.c_str());
+            } else {
+              // Assuming the JSON is an array and each element is a string
+              for (JsonVariant v : doc.as<JsonArray>()) {
+                id(gv_fx_array).push_back(v.as<std::string>());
+              }
+            }
+
+# Update Relay Buttons
+- id: script_updateRelayStates
+  then:
+  - http_request.get:
+      url: ${ip_wled_controller}relays
+      capture_response: true
+      on_response:
+        then:
+        - lambda: |-
+            json::parse_json(body, [](JsonObject root) -> bool {
+                if (root["NoOfRelays"]) {
+                  // assign global variables true/false depinging on query key feedback
+                  id(gv_relay1) = (root["0"] == 1);
+                  id(gv_relay2) = (root["1"] == 1);
+                  id(gv_relay3) = (root["2"] == 1);
+                  id(gv_relay4) = (root["3"] == 1);
+                  // Return value
+                  return true;
+                } else {
+                  ESP_LOGD("custom","Error Updating Relay States");
+                  return false;
+                }
+            });
+  - lvgl.widget.update:
+      id: btn_high_beam
+      state:
+        checked: !lambda return id(gv_relay1);
+  - lvgl.widget.update:
+      id: btn_low_beam
+      state:
+        checked: !lambda return id(gv_relay2);
+  - lvgl.widget.update:
+      id: btn_led_strip
+      state:
+        checked: !lambda return id(gv_relay3);
+
+# --- START OF GUI DEFINITION --- #
+# ############################### #
+
+lvgl:
+  # BASE
+  disp_bg_color: 0x0 # Base Background Color
+
+  # THEMES
+  theme:
+    label:
+      text_color: 0xffffff # Base Text Color
+      #text_font: montserrat_32 # Larger font size
+
+      # STYLES
+  style_definitions:
+  # Tabbar Buttons
+  - id: style_btn_tabbar
+    bg_opa: TRANSP
+    shadow_width: 0
+
+  # Menu Buttons
+  - id: style_btn_menu
+    shadow_width: 0
+  - id: style_btn_menu_checked
+
+  # SFX Page UP/DOWN Buttons
+  - id: style_btn_sfx
+    bg_opa: transp
+    shadow_width: 0
+  - id: style_btn_sfx_pressed
+    bg_opa: 50%
+    bg_color: 0xffffff
+
+  # Turn off when idle
+  on_idle:
+    timeout: !lambda "return (id(display_timeout).state * 1000);"
+    then:
+    - logger.log: "LVGL in idle mode."
+    # AMOLED -> show black screen
+    - lvgl.widget.show: p_amoled_off
+    # LCD -> turn off backlight pin
+    #- light.turn_off: display_backlight
+    # Pause LVGL
+    - delay: 1s
+    - lvgl.pause:
+
+        # Page Definitions
+  pages:
+  # PAGE: Relay Control
+  - id: p_main
+    bg_opa: TRANSP
+    widgets:
+    # BTN: High Beam
+    - button:
+        x: 3
+        y: 3
+        width: 212
+        height: 212
+        id: btn_high_beam
+        checkable: true
+        bg_image_src: img_btn_high_beam
+        styles: style_btn_menu
+        checked:
+          bg_image_src: img_btn_high_beam_checked
+        on_change:
+        # High Beam -> toggle Relay 1
+        - http_request.get: ${ip_wled_controller}relays?toggle=1,0,0,0
+        - script.execute: script_updateRelayStates
+    # BTN: Low Beam
+    - button:
+        x: 235
+        y: 3
+        width: 212
+        height: 212
+        id: btn_low_beam
+        checkable: true
+        bg_image_src: img_btn_low_beam
+        styles: style_btn_menu
+        checked:
+          bg_image_src: img_btn_low_beam_checked
+        on_change:
+        # Low Beam -> toggle Relay 2
+        - http_request.get: ${ip_wled_controller}relays?toggle=0,1,0,0
+        - script.execute: script_updateRelayStates
+    # BTN: LED Strip
+    - button:
+        x: 3
+        y: 235
+        width: 212
+        height: 212
+        id: btn_led_strip
+        checkable: true
+        bg_image_src: img_btn_led_strip
+        styles: style_btn_menu
+        checked:
+          bg_image_src: img_btn_led_strip_checked
+        on_change:
+        # LED Strip -> toggle Relay 3,4
+        - http_request.get: ${ip_wled_controller}relays?toggle=0,0,1,1
+        - script.execute: script_updateRelayStates
+    # BTN: Power
+    - button:
+        x: 235
+        y: 235
+        width: 212
+        height: 212
+        id: btn_power
+        bg_image_src: img_btn_power
+        styles: style_btn_menu
+        on_press:
+          then:
+          # switch all relays off
+          - http_request.get: ${ip_wled_controller}relays?switch=0,0,0,0
+          - script.execute: script_updateRelayStates
+
+  # PAGE: Color/Brightness
+  - id: p_color
+    bg_opa: TRANSP
+    widgets:
+    - image:
+        x: 0
+        y: 0
+        src: img_color
+    - label:
+        id: lbl_brightness
+        x: 285
+        y: 34
+        text: "-"
+        text_font: font_value_small
+        width: 150
+        text_align: CENTER
+    # Brightness Slider
+    - slider:
+        x: 45
+        y: 133
+        width: 360
+        height: 70
+        id: slider_brightness
+        value: 50
+        min_value: 1
+        max_value: 255
+        # Styling --- #
+        bg_opa: transp # background invisible
+        indicator:
+          bg_opa: transp # indicator invisible
+        knob:
+          radius: 100
+          width: 70
+          height: 70
+          bg_color: 0xe4e4e4
+          outline_width: 8
+          outline_color: 0xffffff
+          pad_all: 0
+        # Styling --- #
+        on_value:
+        - lvgl.label.update:
+            id: lbl_brightness
+            text: !lambda |-
+              int scaled_value = (x - 1) * 100 / 254; // Scale slider value to 0-100 as an integer
+              return str_sprintf("%d%%", scaled_value);
+        - http_request.get: !lambda |-
+            return str_sprintf("${ip_wled_controller}win&A=%.0f", x);
+
+    # Selected Color Field
+    - obj:
+        x: 285
+        y: 243
+        id: color_field
+        width: 150
+        height: 80
+        bg_color: 0xb0ff
+        border_width: 0
+        outline_width: 0
+        radius: 100
+
+    # Color Slider
+    - slider:
+        x: 45
+        y: 360
+        width: 360
+        height: 70
+        id: slider_color
+        value: 175
+        min_value: 0
+        max_value: 360
+        # Styling --- #
+        bg_opa: transp # background invisible
+        indicator:
+          bg_opa: transp # indicator invisible
+        knob:
+          radius: 100
+          width: 70
+          height: 70
+          bg_color: 0xb0ff
+          outline_width: 8
+          outline_color: 0xffffff
+          pad_all: 0
+        # Styling --- #
+        on_value:
+        # Update WLED Controller Color
+        - http_request.get: !lambda |-
+            
+            // Map function implementation
+            auto map = [](int x, int in_min, int in_max, int out_min, int out_max) -> int {
+              return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+            };
+
+            // Normalize the angle to be between 0 and 360
+            int angle = x;
+            angle = angle % 360;
+            int red, green, blue;
+
+            // Define color transitions based on the angle
+            if (angle < 120) {
+              red = map(angle, 0, 120, 255, 0);
+              green = map(angle, 0, 120, 0, 255);
+              blue = 0;
+            } else if (angle < 240) {
+              red = 0;
+              green = map(angle, 120, 240, 255, 0);
+              blue = map(angle, 120, 240, 0, 255);
+            } else {
+              red = map(angle, 240, 360, 0, 255);
+              green = 0;
+              blue = map(angle, 240, 360, 255, 0);
+            }
+
+            // assign RGB to global variable
+            id(gv_rgb_color) = lv_color_make(red, green, blue);
+
+            // Call HTTPrequest
+            return str_sprintf("${ip_wled_controller}win&R=%d&G=%d&B=%d", red, green, blue);
+        # Update Slider Knob Color
+        - lvgl.slider.update:
+            id: slider_color
+            knob:
+              bg_color: !lambda return id(gv_rgb_color);
+        # Update Color Field Color
+        - lvgl.obj.update:
+            id: color_field
+            bg_color: !lambda return id(gv_rgb_color);
+
+  # PAGE: Effects
+  - id: p_effects
+    bg_opa: TRANSP
+    widgets:
+    - image:
+        x: 0
+        y: 0
+        src: img_sfx
+
+    # SPEED -> LABEL
+    - label:
+        id: lbl_sfx
+        x: 240
+        y: 29
+        text: !lambda return std::to_string(id(gv_sfx));
+        text_font: font_value_big
+        width: 100
+        text_align: LEFT
+
+    # SPEED -> BTN DECREASE
+    - button:
+        x: 3
+        y: 118
+        width: 222
+        height: 95
+        id: btn_sfx_dec
+        checkable: false
+        styles: style_btn_sfx
+        pressed:
+          styles: style_btn_sfx_pressed
+        on_press:
+        - lvgl.label.update:
+            id: lbl_sfx
+            text: !lambda |-
+              if (id(gv_sfx) > 1) {
+                id(gv_sfx)--;
+              }                          
+              return std::to_string(id(gv_sfx));
+        - http_request.get: !lambda |-
+            int realSpeed = ((id(gv_sfx) - 1) * 255) / (10 - 1);
+            return str_sprintf("${ip_wled_controller}win&SX=%d", realSpeed);
+
+    # SPEED -> BTN INCREASE
+    - button:
+        x: 225
+        y: 118
+        width: 222
+        height: 95
+        id: btn_sfx_inc
+        checkable: false
+        styles: style_btn_sfx
+        pressed:
+          styles: style_btn_sfx_pressed
+        on_press:
+        - lvgl.label.update:
+            id: lbl_sfx
+            text: !lambda |-
+              if (id(gv_sfx) < 10) {
+                id(gv_sfx)++;
+              }                          
+              return std::to_string(id(gv_sfx));
+        - http_request.get: !lambda |-
+            int realSpeed = ((id(gv_sfx) - 1) * 255) / (10 - 1);
+            return str_sprintf("${ip_wled_controller}win&SX=%d", realSpeed);
+
+    # EFFECT -> LABEL
+    - label:
+        id: lbl_fx
+        x: 3
+        y: 263
+        text: !lambda return std::to_string(id(gv_fx));
+        text_font: font_value_big
+        width: 444
+        text_align: CENTER
+
+    # EFFECT -> BTN PREV
+    - button:
+        x: 3
+        y: 352
+        width: 148
+        height: 95
+        id: btn_sfx_down
+        checkable: false
+        styles: style_btn_sfx
+        pressed:
+          styles: style_btn_sfx_pressed
+        on_press:
+        - lvgl.label.update:
+            id: lbl_fx
+            text: !lambda |-
+              if (id(gv_fx) > 0) {
+                id(gv_fx)--;
+              } else {
+                id(gv_fx) = id(gv_fx_array).size() - 1;
+              }
+              int index = id(gv_fx);
+              return id(gv_fx_array).at(index).c_str();
+        - http_request.get: ${ip_wled_controller}win&FX=~-
+
+    # EFFECT -> BTN SOLID
+    - button:
+        x: 151
+        y: 352
+        width: 148
+        height: 95
+        id: btn_solid
+        checkable: false
+        styles: style_btn_sfx
+        pressed:
+          styles: style_btn_sfx_pressed
+        on_press:
+        - http_request.get: ${ip_wled_controller}win&FX=0
+        - lvgl.label.update:
+            id: lbl_fx
+            text: !lambda |-
+              id(gv_fx) = 0;
+              return id(gv_fx_array).at(0).c_str();
+
+    # EFFECT -> BTN NEXT
+    - button:
+        x: 299
+        y: 352
+        width: 148
+        height: 95
+        id: btn_sfx_up
+        checkable: false
+        styles: style_btn_sfx
+        pressed:
+          styles: style_btn_sfx_pressed
+        on_press:
+        - lvgl.label.update:
+            id: lbl_fx
+            text: !lambda |-
+              if (id(gv_fx) < 186) {
+                id(gv_fx)++;
+              } else {
+                id(gv_fx) = 0;
+              }
+              int index = id(gv_fx);
+              return id(gv_fx_array).at(index).c_str();
+        - http_request.get: ${ip_wled_controller}win&FX=~
+
+  # TOP LAYER (screens appear above all other GUI elements)
+  top_layer:
+    widgets:
+    # TAB BAR 
+    - obj:
+        id: menu_tabbar
+        x: 0
+        y: 450
+        width: 450
+        height: 150
+        bg_opa: TRANSP
+        radius: 0
+        pad_all: 0
+        border_width: 0
+        widgets:
+
+        # TAB 1
+        - button:
+            x: 3
+            y: 3
+            width: 148
+            height: 147
+            id: btn_tab_1
+            styles: style_btn_tabbar
+            bg_image_src: img_btn_tab_1
+            on_press:
+              then:
+              - lvgl.page.show: p_main
+              - lvgl.obj.update:
+                  id: page_indicator
+                  x: 72
+
+        # TAB 2
+        - button:
+            x: 151
+            y: 3
+            width: 148
+            height: 147
+            id: btn_tab_2
+            styles: style_btn_tabbar
+            bg_image_src: img_btn_tab_2
+            on_press:
+              then:
+              - lvgl.page.show: p_color
+              - lvgl.obj.update:
+                  id: page_indicator
+                  x: 220
+
+        # TAB 3
+        - button:
+            x: 299
+            y: 3
+            width: 148
+            height: 147
+            id: btn_tab_3
+            styles: style_btn_tabbar
+            bg_image_src: img_btn_tab_3
+            on_press:
+              then:
+              - lvgl.page.show: p_effects
+              - lvgl.obj.update:
+                  id: page_indicator
+                  x: 368
+
+        # PAGE INDICATOR
+        - obj:
+            id: page_indicator
+            x: 72
+            y: 130
+            width: 10
+            height: 10
+            radius: 10
+            bg_color: 0xffffff
+            bg_opa: 70%
+            border_width: 0
+            outline_width: 0
+
+    # BLANK SCREEN (for AMOLED displays)
+    - obj:
+        id: p_amoled_off
+        x: 0
+        y: 0
+        width: 100%
+        height: 100%
+        bg_color: 0x0
+        bg_opa: COVER
+        radius: 0
+        pad_all: 0
+        border_width: 0
+        hidden: true
+
+    # BOOT SCREEN (should be the last one in this list)
+    - obj:
+        id: boot_screen
+        x: 0
+        y: 0
+        width: 100%
+        height: 100%
+        bg_color: 0x0
+        bg_opa: COVER
+        radius: 0
+        pad_all: 0
+        border_width: 0
+        widgets:
+        - image:
+            align: CENTER
+            src: img_boot
+            #y: -40
+        - spinner:
+            align: CENTER
+            y: 95
+            height: 50
+            width: 50
+            spin_time: 1s
+            arc_length: 60deg
+            arc_width: 8
+            indicator:
+              arc_color: 0x18bcf2
+              arc_width: 8
+
+# ############################# #
+# --- END OF GUI DEFINITION --- #
+
+captive_portal:
+
+# Define Backlight as Switch to turn display on/off
+# output:
+#   # does not work for AMOLED
+#   - platform: ledc
+#     pin:
+#       number: ${backlight_pin}
+#     id: backlight_pwm
+#     #inverted: true
+# light:
+#   # does not work for AMOLED
+#   - platform: monochromatic
+#     output: backlight_pwm
+#     name: "Backlight"
+#     id: display_backlight
+#     restore_mode: ALWAYS_ON
+#     internal: false
+
+number:
+# set inactivity duration until LVGL / screen turns off
+- platform: template
+  name: Screen timeout (LVGL)
+  optimistic: true
+  id: display_timeout
+  unit_of_measurement: "s"
+  initial_value: ${display_timeout_s}
+  restore_value: true
+  min_value: 5
+  max_value: 1800
+  step: 1
+  mode: box
+
+image:
+# Menu
+# - file: "assets/sandbox/ico_high-beam.png"
+#   id: img_btn_high_beam
+#   type: RGB565
+#   use_transparency: true
+
+# Boot Logo
+- file: "assets/sandbox/boot.png"
+  #- file: "assets/sandbox/blank.png"
+  id: img_boot
+  type: RGB565
+  resize: 450x600
+
+# Color Page
+- file: "assets/sandbox/color.png"
+  #- file: "assets/sandbox/blank.png"
+  id: img_color
+  type: RGB565
+
+# SFX Page
+- file: "assets/sandbox/sfx.png"
+  #- file: "assets/sandbox/blank.png"
+  id: img_sfx
+  type: RGB565
+
+# BTN High Beam
+- file: "assets/sandbox/btn_high_beam.png"
+  id: img_btn_high_beam
+  type: RGB565
+- file: "assets/sandbox/btn_high_beam_checked.png"
+  id: img_btn_high_beam_checked
+  type: RGB565
+# BTN Low Beam
+- file: "assets/sandbox/btn_low_beam.png"
+  id: img_btn_low_beam
+  type: RGB565
+- file: "assets/sandbox/btn_low_beam_checked.png"
+  id: img_btn_low_beam_checked
+  type: RGB565
+# BTN LED Strip
+- file: "assets/sandbox/btn_led_strip.png"
+  id: img_btn_led_strip
+  type: RGB565
+- file: "assets/sandbox/btn_led_strip_checked.png"
+  id: img_btn_led_strip_checked
+  type: RGB565
+# BTN Power
+- file: "assets/sandbox/btn_power.png"
+  id: img_btn_power
+  type: RGB565
+
+# Tabbar
+- file: "assets/sandbox/ico_menu.png"
+  id: img_btn_tab_1
+  type: RGB565
+  use_transparency: true
+- file: "assets/sandbox/ico_color.png"
+  id: img_btn_tab_2
+  type: RGB565
+  use_transparency: true
+- file: "assets/sandbox/ico_sfx.png"
+  id: img_btn_tab_3
+  type: RGB565
+  use_transparency: true
+
+# binary_sensor:
+#   Define Touch Areas
+#   - platform: homeassistant
+#     id: remote_light
+#     #entity_id: light.remote_light
+#     entity_id: light.wled
+#     publish_initial_state: true
+#     on_state:
+#       then:
+#         lvgl.widget.update:
+#           id: light_btn
+#           state:
+#             checked: !lambda return x;
+
+#   - platform: touchscreen
+#     name: BTN_1
+#     x_min: 0
+#     x_max: 450
+#     y_min: 0
+#     y_max: 300
+#     page_id: page_1
+#     on_press:
+#       - logger.log: "BTN_1 touched."
+#       - display.page.show: page_2
+
+# Example configuration entry
+safe_mode:
+
+button:
+- platform: safe_mode
+  name: "Safe mode"
+  id: btn_safe_mode
