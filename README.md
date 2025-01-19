@@ -11,9 +11,11 @@ Hardware Components for Remote Controller:
 
 For that I designed [a complete 3D printable case](https://makerworld.com/en/models/973948#profileId-946226).
 
-![IMG_6638](https://github.com/user-attachments/assets/3d03886c-c3a4-44cb-b24c-e5d24dc3571e)
+![2025-01-10_oclj5dcp1ilm](https://github.com/user-attachments/assets/17b21df0-d27a-4663-83c9-23b3a8c22528)
 
-![IMG_6639](https://github.com/user-attachments/assets/f425c645-aa31-4b33-9a2c-50df2af1b459)
+![2025-01-10_hyt3c2m0mt6z](https://github.com/user-attachments/assets/0c7d9f86-9788-40d1-9297-77a8de6b4660)
+
+![2025-01-10_ktf1zs0ez7rm](https://github.com/user-attachments/assets/7d4672e6-e2c9-4af1-8665-cd3a1e9a613c)
 
 The wireing is quite simple since the lilygo board already has a LiPo battery connector:
 
@@ -27,3 +29,7 @@ The final GUI supports:
 + **effects control** (page 3)
 
 <img width="1427" alt="Screenshot 2025-01-19 at 09 49 38" src="https://github.com/user-attachments/assets/a721e742-237e-4a8e-8eee-b7703a0a6554" />
+
+![IMG_6638](https://github.com/user-attachments/assets/3d03886c-c3a4-44cb-b24c-e5d24dc3571e)
+
+![IMG_6639](https://github.com/user-attachments/assets/f425c645-aa31-4b33-9a2c-50df2af1b459)
