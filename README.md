@@ -27,8 +27,9 @@ The final GUI supports:
 + **relay control** (page 1)
 + **color & brightness** (page 2)
 + **effects control** (page 3)
++ **settings control** (longpress tab 1)
 
-<img width="1427" alt="Screenshot 2025-01-19 at 09 49 38" src="https://github.com/user-attachments/assets/a721e742-237e-4a8e-8eee-b7703a0a6554" />
+<img width="1493" alt="Screenshot 2025-01-20 at 17 04 44" src="https://github.com/user-attachments/assets/2ce0e046-93f3-4e5a-af55-67b6e12cfacc" />
 
 ![IMG_6638](https://github.com/user-attachments/assets/3d03886c-c3a4-44cb-b24c-e5d24dc3571e)
 
