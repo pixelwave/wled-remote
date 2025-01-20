@@ -7,11 +7,19 @@ substitutions:
   friendly_name: Lilygo T4-S3
   # SETTINGS
   display_timeout_s: '60'
-  ip_wled_controller: http://192.xxx.xxx.xxx/
+  ip_wled_controller_test: http://192.168.178.141/
+  ip_wled_controller_boat: http://4.3.2.1/
+  ssid_boat: "ssid"
+  pw_boat: "password"
   #backlight_pin: GPIO4 # LCD
 
   # Global Variable Definitions
 globals:
+# WLED Controller IP
+- id: gv_ip_wled_controller
+  type: std::string
+  restore_value: no
+  initial_value: ""
 # Relay
 - id: gv_relay1
   type: bool
@@ -29,7 +37,17 @@ globals:
   type: bool
   restore_value: no
   initial_value: "false"
-# Brightness
+# Display/Screensaver Timeout
+- id: gv_screensaver
+  type: int
+  restore_value: no
+  initial_value: ${display_timeout_s}
+# Display Brightness
+- id: gv_dp_brightness
+  type: int
+  restore_value: no
+  initial_value: '255'
+# LED Brightness
 - id: gv_brightness
   type: int
   restore_value: no
@@ -38,6 +56,11 @@ globals:
 - id: gv_rgb_color
   type: lv_color_t
   restore_value: no
+# RGB Angle
+- id: gv_rgb_angle
+  type: int
+  restore_value: no
+  initial_value: '0'
 # Active FX
 - id: gv_fx
   type: int
@@ -102,19 +125,27 @@ logger:
 # Enable Home Assistant API
 api:
   encryption:
-    key: "xxx"
+    key: "..."
 
 ota:
 - platform: esphome
-  password: "xxx"
+  password: "..."
 
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  # # Connect to Single WIFI
+  # ssid: !secret wifi_ssid
+  # password: !secret wifi_password
+
+  # Multi Network (connect in ascending order)
+  networks:
+  - ssid: !secret wifi_ssid
+    password: !secret wifi_password
+  - ssid: ${ssid_boat}
+    password: ${pw_boat}
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: "Lilygo-T4-S3 Fallback Hotspot"
-    password: "xxx"
+    password: "..."
   # Update GUI after WIFI connection established
   on_connect:
   # run init
@@ -145,13 +176,14 @@ touchscreen:
       then:
       - logger.log: "LVGL resuming"
       - lvgl.resume:
-      - lvgl.widget.redraw: # --- Use different actions based on display type --- #
-      - lvgl.widget.hide: p_amoled_off # AMOLED
+      - lvgl.widget.redraw: # set display brightness to previous value
+      - lambda: |-
+          id(display_amoled).set_brightness(id(gv_dp_brightness));
       #- light.turn_on: display_backlight # LCD
-      # --- Use different actions based on display type --- #
 
 display:
 - platform: qspi_dbi
+  id: display_amoled
   model: RM690B0
   data_rate: 80MHz
   spi_mode: mode0
@@ -203,12 +235,45 @@ font:
   glyphs: "!\"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/\\[]|&@#'"
   bpp: 4
 
+text_sensor:
+- platform: wifi_info
+  ssid:
+    id: esp_connected_ssid
+    #name: "ESP Connected SSID"
+
 script:
+
+# Update WLED Controller States to Global Variables
+- id: script_wifi
+  then:
+  - lambda: |-
+      auto ssid = id(esp_connected_ssid).state.c_str();
+      ESP_LOGD("custom", "Connected to SSID: %s", ssid);
+
+      // assign correct IP
+      if (strcmp(ssid, "FRITZ!Box 7490") == 0) {
+        id(gv_ip_wled_controller) = to_string("${ip_wled_controller_test}");
+      } else {
+        id(gv_ip_wled_controller) = to_string("${ip_wled_controller_boat}");
+      }
+      ESP_LOGD("custom", "WLED controller IP set to: %s", id(gv_ip_wled_controller).c_str());
+  # update SSID label on settings page
+  - lvgl.label.update:
+      id: lbl_ssid
+      text: !lambda |-
+        //auto ssid = id(esp_connected_ssid).state.c_str();
+        //ESP_LOGD("custom", "Connected to SSID: %s", ssid);
+        return id(esp_connected_ssid).state.c_str();
+
 # Update WLED Controller States to Global Variables
 - id: script_initialization
   then:
+  # Set Local or Remote IP
+  - script.execute: script_wifi
+  # Query WLED controller
   - http_request.get:
-      url: ${ip_wled_controller}json/state
+      url: !lambda |-
+        return id(gv_ip_wled_controller) + "json/state";
       capture_response: true
       on_response:
         then:
@@ -230,6 +295,25 @@ script:
                   int green = root["seg"][0]["col"][0][1]; // Green
                   int blue = root["seg"][0]["col"][0][2]; // Blue
                   id(gv_rgb_color) = lv_color_make(red, green, blue);
+
+
+                  // Based on Color calculate angle
+                  auto map = [](int x, int in_min, int in_max, int out_min, int out_max) -> int {
+                    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+                  };
+                  int angle = 0;
+                  if (red > 0 && green > 0 && blue == 0) {
+                    // Range: 0° to 120°
+                    angle = map(green, 0, 255, 0, 120);
+                  } else if (green > 0 && blue > 0 && red == 0) {
+                    // Range: 120° to 240°
+                    angle = map(blue, 0, 255, 120, 240);
+                  } else if (blue > 0 && red > 0 && green == 0) {
+                    // Range: 240° to 360°
+                    angle = map(red, 0, 255, 240, 360);
+                  }
+                  id(gv_rgb_angle) = angle;
+
 
                   // Effect Index
                   id(gv_fx) = root["seg"][0]["fx"];
@@ -277,6 +361,7 @@ script:
       value: !lambda return id(gv_brightness);
   - lvgl.slider.update:
       id: slider_color
+      value: !lambda return id(gv_rgb_angle);
       knob:
         bg_color: !lambda return id(gv_rgb_color);
   - lvgl.obj.update:
@@ -297,7 +382,8 @@ script:
 - id: script_fx_parse
   then:
   - http_request.get:
-      url: ${ip_wled_controller}json/eff
+      url: !lambda |-
+        return id(gv_ip_wled_controller) + "json/eff";
       capture_response: true
       max_response_buffer_size: 8192
       on_response:
@@ -321,7 +407,8 @@ script:
 - id: script_updateRelayStates
   then:
   - http_request.get:
-      url: ${ip_wled_controller}relays
+      url: !lambda |-
+        return id(gv_ip_wled_controller) + "relays";
       capture_response: true
       on_response:
         then:
@@ -388,12 +475,12 @@ lvgl:
 
   # Turn off when idle
   on_idle:
-    timeout: !lambda "return (id(display_timeout).state * 1000);"
+    timeout: !lambda "return (id(gv_screensaver) * 1000);"
     then:
     - logger.log: "LVGL in idle mode."
-    # AMOLED -> show black screen
-    - lvgl.widget.show: p_amoled_off
-    # LCD -> turn off backlight pin
+    # Display brightness to 0
+    - lambda: |-
+        id(display_amoled).set_brightness(0);
     #- light.turn_off: display_backlight
     # Pause LVGL
     - delay: 1s
@@ -419,7 +506,8 @@ lvgl:
           bg_image_src: img_btn_high_beam_checked
         on_change:
         # High Beam -> toggle Relay 1
-        - http_request.get: ${ip_wled_controller}relays?toggle=1,0,0,0
+        - http_request.get: !lambda |-
+            return id(gv_ip_wled_controller) + "relays?toggle=1,0,0,0";
         - script.execute: script_updateRelayStates
     # BTN: Low Beam
     - button:
@@ -435,7 +523,8 @@ lvgl:
           bg_image_src: img_btn_low_beam_checked
         on_change:
         # Low Beam -> toggle Relay 2
-        - http_request.get: ${ip_wled_controller}relays?toggle=0,1,0,0
+        - http_request.get: !lambda |-
+            return id(gv_ip_wled_controller) + "relays?toggle=0,1,0,0";
         - script.execute: script_updateRelayStates
     # BTN: LED Strip
     - button:
@@ -451,7 +540,8 @@ lvgl:
           bg_image_src: img_btn_led_strip_checked
         on_change:
         # LED Strip -> toggle Relay 3,4
-        - http_request.get: ${ip_wled_controller}relays?toggle=0,0,1,1
+        - http_request.get: !lambda |-
+            return id(gv_ip_wled_controller) + "relays?toggle=0,0,1,1";
         - script.execute: script_updateRelayStates
     # BTN: Power
     - button:
@@ -465,7 +555,8 @@ lvgl:
         on_press:
           then:
           # switch all relays off
-          - http_request.get: ${ip_wled_controller}relays?switch=0,0,0,0
+          - http_request.get: !lambda |-
+              return id(gv_ip_wled_controller) + "relays?switch=0,0,0,0";
           - script.execute: script_updateRelayStates
 
   # PAGE: Color/Brightness
@@ -476,6 +567,7 @@ lvgl:
         x: 0
         y: 0
         src: img_color
+    # Brightness Label %
     - label:
         id: lbl_brightness
         x: 285
@@ -514,7 +606,7 @@ lvgl:
               int scaled_value = (x - 1) * 100 / 254; // Scale slider value to 0-100 as an integer
               return str_sprintf("%d%%", scaled_value);
         - http_request.get: !lambda |-
-            return str_sprintf("${ip_wled_controller}win&A=%.0f", x);
+            return str_sprintf("%swin&A=%.0f", id(gv_ip_wled_controller).c_str(), x);
 
     # Selected Color Field
     - obj:
@@ -584,7 +676,8 @@ lvgl:
             id(gv_rgb_color) = lv_color_make(red, green, blue);
 
             // Call HTTPrequest
-            return str_sprintf("${ip_wled_controller}win&R=%d&G=%d&B=%d", red, green, blue);
+            return str_sprintf("%swin&R=%d&G=%d&B=%d", id(gv_ip_wled_controller).c_str(), red, green, blue);
+
         # Update Slider Knob Color
         - lvgl.slider.update:
             id: slider_color
@@ -635,7 +728,7 @@ lvgl:
               return std::to_string(id(gv_sfx));
         - http_request.get: !lambda |-
             int realSpeed = ((id(gv_sfx) - 1) * 255) / (10 - 1);
-            return str_sprintf("${ip_wled_controller}win&SX=%d", realSpeed);
+            return str_sprintf("%swin&SX=%d", id(gv_ip_wled_controller).c_str(), realSpeed);
 
     # SPEED -> BTN INCREASE
     - button:
@@ -658,7 +751,7 @@ lvgl:
               return std::to_string(id(gv_sfx));
         - http_request.get: !lambda |-
             int realSpeed = ((id(gv_sfx) - 1) * 255) / (10 - 1);
-            return str_sprintf("${ip_wled_controller}win&SX=%d", realSpeed);
+            return str_sprintf("%swin&SX=%d", id(gv_ip_wled_controller).c_str(), realSpeed);
 
     # EFFECT -> LABEL
     - label:
@@ -692,7 +785,8 @@ lvgl:
               }
               int index = id(gv_fx);
               return id(gv_fx_array).at(index).c_str();
-        - http_request.get: ${ip_wled_controller}win&FX=~-
+        - http_request.get: !lambda |-
+            return id(gv_ip_wled_controller) + "win&FX=~-";
 
     # EFFECT -> BTN SOLID
     - button:
@@ -706,7 +800,8 @@ lvgl:
         pressed:
           styles: style_btn_sfx_pressed
         on_press:
-        - http_request.get: ${ip_wled_controller}win&FX=0
+        - http_request.get: !lambda |-
+            return id(gv_ip_wled_controller) + "win&FX=0";
         - lvgl.label.update:
             id: lbl_fx
             text: !lambda |-
@@ -735,7 +830,8 @@ lvgl:
               }
               int index = id(gv_fx);
               return id(gv_fx_array).at(index).c_str();
-        - http_request.get: ${ip_wled_controller}win&FX=~
+        - http_request.get: !lambda |-
+            return id(gv_ip_wled_controller) + "win&FX=~";
 
   # TOP LAYER (screens appear above all other GUI elements)
   top_layer:
@@ -768,6 +864,11 @@ lvgl:
               - lvgl.obj.update:
                   id: page_indicator
                   x: 72
+              # - lambda: |-
+              #       ESP_LOGD("custom", "Angle value: %d", id(gv_rgb_angle));
+            on_long_press:
+              then:
+              - lvgl.widget.show: p_settings
 
         # TAB 2
         - button:
@@ -800,8 +901,11 @@ lvgl:
               - lvgl.obj.update:
                   id: page_indicator
                   x: 368
+              # DELETE --- #
+              - script.execute: script_wifi
+              # DELETE --- #
 
-        # PAGE INDICATOR
+              # PAGE INDICATOR
         - obj:
             id: page_indicator
             x: 72
@@ -814,9 +918,9 @@ lvgl:
             border_width: 0
             outline_width: 0
 
-    # BLANK SCREEN (for AMOLED displays)
+    # OVERLAY: SETTINGS
     - obj:
-        id: p_amoled_off
+        id: p_settings
         x: 0
         y: 0
         width: 100%
@@ -827,6 +931,126 @@ lvgl:
         pad_all: 0
         border_width: 0
         hidden: true
+        widgets:
+        - image:
+            align: CENTER
+            src: img_settings
+
+        # BTN -> Screensaver Toggle
+        - button:
+            x: 285
+            y: 35
+            width: 120
+            height: 60
+            id: btn_toggle_screensaver
+            checkable: true
+            bg_opa: TRANSP
+            bg_image_src: img_btn_toggle_on
+            styles: style_btn_menu
+            checked:
+              bg_image_src: img_btn_toggle_off
+              bg_opa: TRANSP
+            on_change:
+              then:
+              - if:
+                  condition:
+                    lambda: return x; # x is variable for button checked true / false
+                  then:
+                  # fires if unchecked
+                  - lambda: |-
+                      // set idle timer "OFF" (very long value)
+                      id(gv_screensaver) = 7200;
+                      //ESP_LOGD("custom", "Updated gv_screensaver timeout value: %d", id(gv_screensaver));
+                  else:
+                  # fires if checked
+                  - lambda: |-
+                      // set idle timer "ON" (initial substitution value)
+                      id(gv_screensaver) = atoi("${display_timeout_s}");
+                      //ESP_LOGD("custom", "Updated gv_screensaver timeout value: %d", id(gv_screensaver));
+
+        # LABEL -> WIFI SSID
+        - label:
+            x: 45
+            y: 423
+            id: lbl_ssid
+            width: 360
+            text_font: font_value_small
+            text_color: 0xceba57
+            text_align: LEFT
+            #text: !lambda return std::to_string(id(gv_sfx));
+
+            # LABEL -> Display Brightness (%)
+        - label:
+            id: lbl_dp_brightness
+            x: 244
+            y: 155
+            text: "100%"
+            text_font: font_value_small
+            width: 150
+            text_color: 0xceba57
+            text_align: RIGHT
+
+        # SLIDER -> Display Brightness
+        - slider:
+            x: 75
+            y: 227
+            width: 300
+            height: 70
+            id: slider_dp_brightness
+            value: 50
+            min_value: 2
+            max_value: 5
+            # Styling --- #
+            bg_opa: transp # background invisible
+            indicator:
+              bg_opa: transp # indicator invisible
+            knob:
+              radius: 100
+              width: 70
+              height: 70
+              bg_color: 0xe4e4e4
+              outline_width: 8
+              outline_color: 0xffffff
+              pad_all: 0
+            # Styling --- #
+            on_value:
+            - lvgl.label.update:
+                id: lbl_dp_brightness
+                text: !lambda |-
+                  int scaled_value = (x - 1) * 100 / 4; // Scale slider value to 0-100 as an integer
+                  return str_sprintf("%d%%", scaled_value);
+            - lambda: |-
+                //int brightness;
+                switch ((int)x) {
+                  case 2:
+                    id(gv_dp_brightness) = 64;  // 25% of 255
+                    break;
+                  case 3:
+                    id(gv_dp_brightness) = 128; // 50% of 255
+                    break;
+                  case 4:
+                    id(gv_dp_brightness) = 192; // 75% of 255
+                    break;
+                  case 5:
+                    id(gv_dp_brightness) = 255; // 100% of 255
+                    break;
+                  default:
+                    id(gv_dp_brightness) = 255; // Default to max brightness
+                }
+                id(display_amoled).set_brightness(id(gv_dp_brightness));
+
+        # BTN -> Close
+        - button:
+            x: 3
+            y: 503
+            width: 444
+            height: 95
+            checkable: false
+            styles: style_btn_sfx
+            pressed:
+              styles: style_btn_sfx_pressed
+            on_press:
+            - lvgl.widget.hide: p_settings
 
     # BOOT SCREEN (should be the last one in this list)
     - obj:
@@ -861,23 +1085,6 @@ lvgl:
 # --- END OF GUI DEFINITION --- #
 
 captive_portal:
-
-# Define Backlight as Switch to turn display on/off
-# output:
-#   # does not work for AMOLED
-#   - platform: ledc
-#     pin:
-#       number: ${backlight_pin}
-#     id: backlight_pwm
-#     #inverted: true
-# light:
-#   # does not work for AMOLED
-#   - platform: monochromatic
-#     output: backlight_pwm
-#     name: "Backlight"
-#     id: display_backlight
-#     restore_mode: ALWAYS_ON
-#     internal: false
 
 number:
 # set inactivity duration until LVGL / screen turns off
@@ -919,6 +1126,23 @@ image:
   id: img_sfx
   type: RGB565
 
+# Settings Page
+- file: "assets/sandbox/settings.png"
+  id: img_settings
+  type: RGB565
+  resize: 450x600
+
+# Toggle ON
+- file: "assets/sandbox/btn_toggle_on.png"
+  id: img_btn_toggle_on
+  type: RGB565
+  use_transparency: true
+# Toggle OFF
+- file: "assets/sandbox/btn_toggle_off.png"
+  id: img_btn_toggle_off
+  type: RGB565
+  use_transparency: true
+
 # BTN High Beam
 - file: "assets/sandbox/btn_high_beam.png"
   id: img_btn_high_beam
@@ -959,32 +1183,7 @@ image:
   type: RGB565
   use_transparency: true
 
-# binary_sensor:
-#   Define Touch Areas
-#   - platform: homeassistant
-#     id: remote_light
-#     #entity_id: light.remote_light
-#     entity_id: light.wled
-#     publish_initial_state: true
-#     on_state:
-#       then:
-#         lvgl.widget.update:
-#           id: light_btn
-#           state:
-#             checked: !lambda return x;
-
-#   - platform: touchscreen
-#     name: BTN_1
-#     x_min: 0
-#     x_max: 450
-#     y_min: 0
-#     y_max: 300
-#     page_id: page_1
-#     on_press:
-#       - logger.log: "BTN_1 touched."
-#       - display.page.show: page_2
-
-# Example configuration entry
+xample configuration entry
 safe_mode:
 
 button:
